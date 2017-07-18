@@ -129,10 +129,9 @@ function pmt2recur_civicrm_validateForm($formName, &$fields, &$files, &$form, &$
         // in this situation.
         if (!empty($fields['total_amount']) && $fields['total_amount'] != $dao->amount) {
           $errors['total_amount'] = ts(
-            'The total amount does not match the expected amount (%1) for the selected recurring contribution.',
-            array(
-              'domain' => 'pmt2recur',
-              '%1' => "<em>{$dao->amount}</em>",
+            'The total amount does not match the expected amount (%1) for the selected recurring contribution.', array(
+            'domain' => 'pmt2recur',
+            '%1' => "<em>{$dao->amount}</em>",
             )
           );
         }
@@ -143,10 +142,9 @@ function pmt2recur_civicrm_validateForm($formName, &$fields, &$files, &$form, &$
             'id' => $dao->financial_type_id,
           ));
           $errors['financial_type_id'] = ts(
-            'The financial type does not match the expected financial type (%1) for the selected recurring contribution.',
-            array(
-              'domain' => 'pmt2recur',
-              '%1' => "<em>{$result}</em>",
+            'The financial type does not match the expected financial type (%1) for the selected recurring contribution.', array(
+            'domain' => 'pmt2recur',
+            '%1' => "<em>{$result}</em>",
             )
           );
         }
@@ -262,7 +260,7 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
 
 /**
  * Get desired details of available recurring contributions for the given contact.
- * 
+ *
  * @staticvar array $cache
  * @param Int $contact_id CiviCRM Contact ID for the contact.
  * @param String $column Name of the SQL column to retrieve per contribution. If
@@ -270,7 +268,18 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
  *   IDs for keys, each value being an associative array of all columns for
  *   that contribution. If given as one of the following, the return value is a
  *   two-dimensional array having contribution IDs for keys, each value being
- *   the value of the given column.
+ *   the value of the given column:
+ *    id: contribution ID
+ *    page_title: title of the related contribution page
+ *    start_date: start date of recurring contribution
+ *    contribution_type_name: financial type name
+ *    amount: amount
+ *    frequency_unit: e.g., day, week
+ *    processor_id: ID for the recurring contribution, as assigned by the
+ *      payment processor
+ *    financial_type_id: financial type ID
+ *    has_completed_contributions: 0 if no contributions have been completed for
+ *      this recurring contribution; otherwise 1.
  * @return Array
  */
 function pmt2recur_build_recurring_contributions_list($contact_id, $column = NULL) {
@@ -283,19 +292,25 @@ function pmt2recur_build_recurring_contributions_list($contact_id, $column = NUL
 
     // TODO: use APIs here for more durable code.
     $query = "
-      SELECT DISTINCT
+      SELECT
         cr.id, cp.title as page_title, cr.start_date,
         ct.name as contribution_type_name, cr.amount, cr.frequency_unit,
-        cr.processor_id, cr.financial_type_id
+        cr.processor_id, cr.financial_type_id, (co_completed.id IS NOT NULL) AS
+        has_completed_contributions
       FROM
         civicrm_contribution_recur cr
         INNER JOIN civicrm_contribution co ON co.contribution_recur_id = cr.id
         LEFT JOIN civicrm_contribution_page cp ON cp.id = co.contribution_page_id
         LEFT JOIN civicrm_financial_type ct ON ct.id = cr.financial_type_id
+        LEFT JOIN civicrm_contribution co_completed ON
+          co_completed.contribution_recur_id = cr.id
+          AND co_completed.contribution_status_id = 1
       WHERE
         cr.contact_id = %1
         AND cr.start_date < now()
         AND cr.is_test = 0
+      GROUP BY
+        cr.id
     ";
 
     $dao = CRM_Core_DAO::executeQuery($query, $params);
@@ -327,7 +342,8 @@ function pmt2recur_build_recurring_contributions_list($contact_id, $column = NUL
       elseif ($values['membership_source']) {
         $name = '"' . $values['membership_source'] . '"';
       }
-      $contributions[$id]['option_label'] = $name
+      $contributions[$id]['option_label'] = ($values['has_completed_contributions'] ? '' : '* ')
+        . $name
         . ($values['contribution_type_name'] ? " ({$values['contribution_type_name']})" : '')
         . ($values['amount'] ? ', ' . $values['amount'] . ($values['frequency_unit'] ? "/" . $values['frequency_unit'] : '') : '')
         . ($values['start_date'] ? ', started on ' . CRM_Utils_Date::customFormat($values['start_date'], '%b %d, %Y') : '')

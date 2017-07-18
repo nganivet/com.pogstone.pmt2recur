@@ -1,10 +1,35 @@
 (function($, ts)   {
 
   /**
+   * Check wither a selected recurring contribution has no completed payments;
+   * if so, present an error message and, if relevant, prevent the event default,
+   * e.g., prevent the form submission.
+   *
+   * This fires upon selection
+   *
+   * @param Event e
+   * @returns Boolean
+   */
+  CRM.pmt2recurPrevalidateContributionsWithNoCompletedPayments = function(e) {
+    var contribution_recur_id = $('#contribution_recur_id').val();
+    if (! (CRM.vars.pmt2recur.contribution_recur_details[contribution_recur_id].has_completed_contributions * 1)) {
+      CRM.alert(
+        ts('The selected recurring contribution has no completed installments associated with it, so additional installments cannot be linked. If you are recording a transaction that has already been completed through your payment processor, please record it as a one-time transaction, then cancel the existing recurring contribution and create a new recurring contribution for the remaining installments due.'),
+        ts('Invalid choice'),
+        'error'
+      );
+      e.preventDefault();
+      return false;
+    }
+    return true;
+  }
+
+
+  /**
    * Change handler for contribution_recur_id field.
    * @returns {undefined}
    */
-  CRM.pmt2recur_set_fields_per_recur = function () {
+  CRM.pmt2recurSetFieldsPerRecurringContribution = function () {
     // Define vars to store relevant values
     var contribution_recur_id = $('#contribution_recur_id').val();
     var original_financial_type_id = $('#financial_type_id').val();
@@ -13,7 +38,7 @@
     // Remove any existing alert. We'll add it below if it's needed.
     $('#pmt2recur-contribution_recur_id-alert').remove();
     var alert_text = '';
-    
+
     if (contribution_recur_id > 0) {
       var new_financial_type_id = CRM.vars.pmt2recur.contribution_recur_details[contribution_recur_id].financial_type_id;
       var new_total_amount = CRM.vars.pmt2recur.contribution_recur_details[contribution_recur_id].amount;
@@ -46,7 +71,14 @@
     table.remove();
 
     // Define a change handler for the "contribution_recur_id" field.
-    $('#contribution_recur_id').change(CRM.pmt2recur_set_fields_per_recur);
+    $('#contribution_recur_id').change(CRM.pmt2recurSetFieldsPerRecurringContribution);
+    $('#contribution_recur_id').change(CRM.pmt2recurPrevalidateContributionsWithNoCompletedPayments);
+
+    $('#contribution_recur_id').closest('form').find('input[type="submit"]:not(#_qf_Contribution_cancel)').click(CRM.pmt2recurPrevalidateContributionsWithNoCompletedPayments);
+
+
+    // Prepend an explanation about contributions with no completed payments.
+    $('#contribution_recur_id').before('<div class="help">'+ ts('* Items marked with an asterisk are not available for selection.') +'</div>');
   });
 
 }(CRM.$, CRM.ts('com.pogstone.pmt2recur')));
