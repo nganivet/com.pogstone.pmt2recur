@@ -179,7 +179,7 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
       if ($contact_id) {
         // Build a list of current existing subscription_ids for the contact.
         // FIXME: This needs to be built dynamically when contact is selected on new payments.
-        $options = pmt2recur_build_recurring_contributions_list($contact_id);
+        $options = pmt2recur_build_recurring_contributions_list($contact_id, 'option_label');
       }
       else {
         $options = array();
@@ -192,6 +192,13 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
         );
         $options = $empty_options + $options;
         $form->addElement('select', 'contribution_recur_id', ts('Recurring Contribution'), $options);
+        CRM_Core_Resources::singleton()->addScriptFile('com.pogstone.pmt2recur', 'js/pmt2recur.js');
+
+        // Pass details of recurring contributions to JS scope.
+        $settings = array(
+          'contribution_recur_details' => pmt2recur_build_recurring_contributions_list($contact_id),
+        );
+        CRM_Core_Resources::singleton()->addVars('pmt2recur', $settings);
 
         if ($form->_id) {
           require_once 'api/api.php';
@@ -211,24 +218,16 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
     }
 
     if ($has_options && $is_target_pane) {
+      // There's probably a better way to do this; the point is merely to add
+      // some javasript that will run when the 'AdditionalDetail' accordion is
+      // expanded. CRM_Core_Resources::singleton()->addScriptFile() doesn't do
+      // it, perhaps because it's not a full page load with headers and footers.
       $form->addElement('static', 'script', '', "
         <script type='text/javascript'>
           //<![CDATA[
-          cj().ready(function () {
-            var table = cj('#contribution_recur_id').closest('table')
-            var label = table.find('label')
-
-            target_el = cj('#contribution_page_id').closest('tr')
-            new_el = target_el.clone()
-            new_el.find('td').empty()
-            new_el.find('td').not('.label').append(cj('#contribution_recur_id'))
-            new_el.find('td.label').append(label)
-
-            target_el.after(new_el)
-            table.remove()
-          })
-
-          //]]>
+        " .
+        file_get_contents(CRM_Core_Resources::singleton()->getPath('com.pogstone.pmt2recur', 'js/pmt2recur_pane.js'))
+        . "  //]]>
         </script>
       ");
 
@@ -246,7 +245,20 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
   }
 }
 
-function pmt2recur_build_recurring_contributions_list($contact_id) {
+/**
+ * Get desired details of available recurring contributions for the given contact.
+ * 
+ * @staticvar array $cache
+ * @param Int $contact_id CiviCRM Contact ID for the contact.
+ * @param String $column Name of the SQL column to retrieve per contribution. If
+ *   not given, the return value is a three-dimensional array with contribution
+ *   IDs for keys, each value being an associative array of all columns for
+ *   that contribution. If given as one of the following, the return value is a
+ *   two-dimensional array having contribution IDs for keys, each value being
+ *   the value of the given column.
+ * @return Array
+ */
+function pmt2recur_build_recurring_contributions_list($contact_id, $column = NULL) {
   static $cache = array();
   if (!isset($cache[$contact_id])) {
     // joining with contribution table for extra checks
@@ -254,39 +266,12 @@ function pmt2recur_build_recurring_contributions_list($contact_id) {
       1 => array($contact_id, 'Int'),
     );
 
-
-
-    // Where clause originally included:
-    /*
-      AND cr.contribution_status_id in (2,5,6) -- 2, 5, and 6 are: 'pending', 'in progress' and 'overdue'
-      AND (cr.end_date IS NULL OR cr.end_date > now())
-      AND cr.cancel_date is NULL
-
-
-      $query = "
-      SELECT DISTINCT
-      cr.id, cp.title as page_title, cr.start_date, co.id as contribution_id,
-      ct.name as contribution_type_name, cr.amount, cr.frequency_unit,
-      cr.processor_id
-      FROM
-      civicrm_contribution_recur cr
-      INNER JOIN civicrm_contribution co ON co.contribution_recur_id = cr.id
-      LEFT JOIN civicrm_contribution_page cp ON cp.id = co.contribution_page_id
-      LEFT JOIN civicrm_contribution_type ct ON ct.id = co.contribution_type_id
-      WHERE
-      cr.contact_id = %1
-      AND cr.start_date < now()
-      AND cr.is_test = 0
-      ";
-     */
-
-
-
+    // TODO: use APIs here for more durable code.
     $query = "
       SELECT DISTINCT
         cr.id, cp.title as page_title, cr.start_date,
         ct.name as contribution_type_name, cr.amount, cr.frequency_unit,
-        cr.processor_id
+        cr.processor_id, co.financial_type_id
       FROM
         civicrm_contribution_recur cr
         INNER JOIN civicrm_contribution co ON co.contribution_recur_id = cr.id
@@ -298,9 +283,6 @@ function pmt2recur_build_recurring_contributions_list($contact_id) {
         AND cr.is_test = 0
     ";
 
-
-
-    // print "<br><br>SQL: ".$query;
     $dao = CRM_Core_DAO::executeQuery($query, $params);
     $contributions = $contribution_ids = array();
     while ($dao->fetch()) {
@@ -322,7 +304,6 @@ function pmt2recur_build_recurring_contributions_list($contact_id) {
       $contributions[$dao->contribution_recur_id]['membership_source'] = $dao->source;
     }
 
-    $options = array();
     foreach ($contributions as $id => $values) {
       $name = 'Offline Recurring Contribution';
       if ($values['page_title']) {
@@ -331,13 +312,19 @@ function pmt2recur_build_recurring_contributions_list($contact_id) {
       elseif ($values['membership_source']) {
         $name = '"' . $values['membership_source'] . '"';
       }
-      $options[$id] = $name
+      $contributions[$id]['option_label'] = $name
         . ($values['contribution_type_name'] ? " ({$values['contribution_type_name']})" : '')
         . ($values['amount'] ? ', ' . $values['amount'] . ($values['frequency_unit'] ? "/" . $values['frequency_unit'] : '') : '')
         . ($values['start_date'] ? ', started on ' . CRM_Utils_Date::customFormat($values['start_date'], '%b %d, %Y') : '')
         . ($values['processor_id'] ? " [{$values['processor_id']}]" : '');
     }
-    $cache[$contact_id] = $options;
+    $cache[$contact_id] = $contributions;
   }
-  return $cache[$contact_id];
+
+  if ($column !== NULL) {
+    return array_column($cache[$contact_id], $column, 'id');
+  }
+  else {
+    return $cache[$contact_id];
+  }
 }
