@@ -107,10 +107,7 @@ function pmt2recur_civicrm_alterSettingsFolders(&$metaDataFolders = NULL) {
   _pmt2recur_civix_civicrm_alterSettingsFolders($metaDataFolders);
 }
 
-function pmt2recur_civicrm_validate($formName, &$fields, &$files, &$form) {
-
-
-
+function pmt2recur_civicrm_validateForm($formName, &$fields, &$files, &$form, &$errors) {
   /*
     if (!user_access('access civicrm_pmt2recur')) {
     return;
@@ -130,14 +127,32 @@ function pmt2recur_civicrm_validate($formName, &$fields, &$files, &$form) {
 
         // With priceset contributions, the $fields['total_amount'] value is empty/blank. No way to validate the amounts match
         // in this situation.
-        if (strlen($fields['total_amount']) > 0 && $fields['total_amount'] != $dao->amount) {
-          $errors['total_amount'] = 'The total amount does not match the expected amount for the selected recurring contribution.';
+        if (!empty($fields['total_amount']) && $fields['total_amount'] != $dao->amount) {
+          $errors['total_amount'] = ts(
+            'The total amount does not match the expected amount (%1) for the selected recurring contribution.',
+            array(
+              'domain' => 'pmt2recur',
+              '%1' => "<em>{$dao->amount}</em>",
+            )
+          );
+        }
+        if (!empty($fields['financial_type_id']) && $fields['financial_type_id'] != $dao->financial_type_id) {
+          $result = civicrm_api3('FinancialType', 'getvalue', array(
+            'sequential' => 1,
+            'return' => "name",
+            'id' => $dao->financial_type_id,
+          ));
+          $errors['financial_type_id'] = ts(
+            'The financial type does not match the expected financial type (%1) for the selected recurring contribution.',
+            array(
+              'domain' => 'pmt2recur',
+              '%1' => "<em>{$result}</em>",
+            )
+          );
         }
       }
     }
   }
-
-  return $errors;
 }
 
 function pmt2recur_civicrm_pre($op, $objectName, $id, &$params) {
@@ -271,12 +286,12 @@ function pmt2recur_build_recurring_contributions_list($contact_id, $column = NUL
       SELECT DISTINCT
         cr.id, cp.title as page_title, cr.start_date,
         ct.name as contribution_type_name, cr.amount, cr.frequency_unit,
-        cr.processor_id, co.financial_type_id
+        cr.processor_id, cr.financial_type_id
       FROM
         civicrm_contribution_recur cr
         INNER JOIN civicrm_contribution co ON co.contribution_recur_id = cr.id
         LEFT JOIN civicrm_contribution_page cp ON cp.id = co.contribution_page_id
-        LEFT JOIN civicrm_financial_type ct ON ct.id = co.financial_type_id
+        LEFT JOIN civicrm_financial_type ct ON ct.id = cr.financial_type_id
       WHERE
         cr.contact_id = %1
         AND cr.start_date < now()
