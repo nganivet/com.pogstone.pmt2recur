@@ -107,47 +107,58 @@ function pmt2recur_civicrm_alterSettingsFolders(&$metaDataFolders = NULL) {
   _pmt2recur_civix_civicrm_alterSettingsFolders($metaDataFolders);
 }
 
-
-
-function pmt2recur_civicrm_validate($formName, &$fields, &$files, &$form) {
-
-
-  
- /*
-  if (!user_access('access civicrm_pmt2recur')) {
+function pmt2recur_civicrm_validateForm($formName, &$fields, &$files, &$form, &$errors) {
+  /*
+    if (!user_access('access civicrm_pmt2recur')) {
     return;
-  }
-  */
+    }
+   */
   $errors = array();
   if ($formName == 'CRM_Contribute_Form_Contribution') {
-  
-  
+
+
     if ($fields['contribution_recur_id']) {
       require_once 'CRM/Contribute/BAO/ContributionRecur.php';
-      
+
       $dao = new CRM_Contribute_BAO_ContributionRecur();
       $dao->id = $fields['contribution_recur_id'];
       $dao->find();
       if ($dao->fetch()) {
-      
+
         // With priceset contributions, the $fields['total_amount'] value is empty/blank. No way to validate the amounts match
-        // in this situation. 
-        if (strlen($fields['total_amount'] )> 0 &&  $fields['total_amount'] != $dao->amount) {
-          $errors['total_amount'] = 'The total amount does not match the expected amount for the selected recurring contribution.';
+        // in this situation.
+        if (!empty($fields['total_amount']) && $fields['total_amount'] != $dao->amount) {
+          $errors['total_amount'] = ts(
+            'The total amount does not match the expected amount (%1) for the selected recurring contribution.', array(
+            'domain' => 'pmt2recur',
+            '%1' => "<em>{$dao->amount}</em>",
+            )
+          );
+        }
+        if (!empty($fields['financial_type_id']) && $fields['financial_type_id'] != $dao->financial_type_id) {
+          $result = civicrm_api3('FinancialType', 'getvalue', array(
+            'sequential' => 1,
+            'return' => "name",
+            'id' => $dao->financial_type_id,
+          ));
+          $errors['financial_type_id'] = ts(
+            'The financial type does not match the expected financial type (%1) for the selected recurring contribution.', array(
+            'domain' => 'pmt2recur',
+            '%1' => "<em>{$result}</em>",
+            )
+          );
         }
       }
     }
   }
-  
-  return $errors;
 }
 
 function pmt2recur_civicrm_pre($op, $objectName, $id, &$params) {
   /*
-  if (!user_access('access civicrm_pmt2recur')) {
+    if (!user_access('access civicrm_pmt2recur')) {
     return;
-  }
-  */
+    }
+   */
 
   if ($objectName == 'Contribution') {
     if ($op == 'edit' || $op == 'create') {
@@ -163,13 +174,13 @@ function pmt2recur_civicrm_pre($op, $objectName, $id, &$params) {
  * Implements hook_civicrm_buildForm().
  */
 function pmt2recur_civicrm_buildForm($formName, &$form) {
-  
+
   /*
-  if (!user_access('access civicrm_pmt2recur')) {
+    if (!user_access('access civicrm_pmt2recur')) {
     return;
-  }
-  */
-  
+    }
+   */
+
   if ($formName == 'CRM_Contribute_Form_Contribution') {
     // FIXME: add checks for these cases:
     // - form element #is_recur value==1
@@ -181,8 +192,9 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
       if ($contact_id) {
         // Build a list of current existing subscription_ids for the contact.
         // FIXME: This needs to be built dynamically when contact is selected on new payments.
-        $options = pmt2recur_build_recurring_contributions_list($contact_id);
-      } else {
+        $options = pmt2recur_build_recurring_contributions_list($contact_id, 'option_label');
+      }
+      else {
         $options = array();
       }
       $has_options = FALSE;
@@ -193,6 +205,13 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
         );
         $options = $empty_options + $options;
         $form->addElement('select', 'contribution_recur_id', ts('Recurring Contribution'), $options);
+        CRM_Core_Resources::singleton()->addScriptFile('com.pogstone.pmt2recur', 'js/pmt2recur.js');
+
+        // Pass details of recurring contributions to JS scope.
+        $settings = array(
+          'contribution_recur_details' => pmt2recur_build_recurring_contributions_list($contact_id),
+        );
+        CRM_Core_Resources::singleton()->addVars('pmt2recur', $settings);
 
         if ($form->_id) {
           require_once 'api/api.php';
@@ -212,24 +231,16 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
     }
 
     if ($has_options && $is_target_pane) {
+      // There's probably a better way to do this; the point is merely to add
+      // some javasript that will run when the 'AdditionalDetail' accordion is
+      // expanded. CRM_Core_Resources::singleton()->addScriptFile() doesn't do
+      // it, perhaps because it's not a full page load with headers and footers.
       $form->addElement('static', 'script', '', "
         <script type='text/javascript'>
           //<![CDATA[
-          cj().ready(function () {
-            var table = cj('#contribution_recur_id').closest('table')
-            var label = table.find('label')
-            
-            target_el = cj('#contribution_page_id').closest('tr')
-            new_el = target_el.clone()
-            new_el.find('td').empty()
-            new_el.find('td').not('.label').append(cj('#contribution_recur_id'))
-            new_el.find('td.label').append(label)
-
-            target_el.after(new_el)
-            table.remove()
-          })
-
-          //]]>
+        " .
+        file_get_contents(CRM_Core_Resources::singleton()->getPath('com.pogstone.pmt2recur', 'js/pmt2recur_pane.js'))
+        . "  //]]>
         </script>
       ");
 
@@ -247,69 +258,68 @@ function pmt2recur_civicrm_buildForm($formName, &$form) {
   }
 }
 
-
-function pmt2recur_build_recurring_contributions_list($contact_id) {
+/**
+ * Get desired details of available recurring contributions for the given contact.
+ *
+ * @staticvar array $cache
+ * @param Int $contact_id CiviCRM Contact ID for the contact.
+ * @param String $column Name of the SQL column to retrieve per contribution. If
+ *   not given, the return value is a three-dimensional array with contribution
+ *   IDs for keys, each value being an associative array of all columns for
+ *   that contribution. If given as one of the following, the return value is a
+ *   two-dimensional array having contribution IDs for keys, each value being
+ *   the value of the given column:
+ *    id: contribution ID
+ *    page_title: title of the related contribution page
+ *    start_date: start date of recurring contribution
+ *    contribution_type_name: financial type name
+ *    amount: amount
+ *    frequency_unit: e.g., day, week
+ *    processor_id: ID for the recurring contribution, as assigned by the
+ *      payment processor
+ *    financial_type_id: financial type ID
+ *    has_completed_contributions: 0 if no contributions have been completed for
+ *      this recurring contribution; otherwise 1.
+ * @return Array
+ */
+function pmt2recur_build_recurring_contributions_list($contact_id, $column = NULL) {
   static $cache = array();
   if (!isset($cache[$contact_id])) {
     // joining with contribution table for extra checks
     $params = array(
       1 => array($contact_id, 'Int'),
     );
-    
-    
-    
-    // Where clause originally included:
-    /*
-      AND cr.contribution_status_id in (2,5,6) -- 2, 5, and 6 are: 'pending', 'in progress' and 'overdue'
-         AND (cr.end_date IS NULL OR cr.end_date > now())
-        AND cr.cancel_date is NULL
-        
-        
+
+    // TODO: use APIs here for more durable code.
     $query = "
-      SELECT DISTINCT
-        cr.id, cp.title as page_title, cr.start_date, co.id as contribution_id,
+      SELECT
+        cr.id, cp.title as page_title, cr.start_date,
         ct.name as contribution_type_name, cr.amount, cr.frequency_unit,
-        cr.processor_id
+        cr.processor_id, cr.financial_type_id, (co_completed.id IS NOT NULL) AS
+        has_completed_contributions
       FROM
         civicrm_contribution_recur cr
         INNER JOIN civicrm_contribution co ON co.contribution_recur_id = cr.id
         LEFT JOIN civicrm_contribution_page cp ON cp.id = co.contribution_page_id
-        LEFT JOIN civicrm_contribution_type ct ON ct.id = co.contribution_type_id
+        LEFT JOIN civicrm_financial_type ct ON ct.id = cr.financial_type_id
+        LEFT JOIN civicrm_contribution co_completed ON
+          co_completed.contribution_recur_id = cr.id
+          AND co_completed.contribution_status_id = 1
       WHERE
         cr.contact_id = %1
         AND cr.start_date < now()
         AND cr.is_test = 0
+      GROUP BY
+        cr.id
     ";
-    */
-    
-    
- 
- 	 $query = "
-      SELECT DISTINCT
-        cr.id, cp.title as page_title, cr.start_date, 
-        ct.name as contribution_type_name, cr.amount, cr.frequency_unit,
-        cr.processor_id
-      FROM
-        civicrm_contribution_recur cr
-        INNER JOIN civicrm_contribution co ON co.contribution_recur_id = cr.id
-        LEFT JOIN civicrm_contribution_page cp ON cp.id = co.contribution_page_id
-        LEFT JOIN civicrm_financial_type ct ON ct.id = co.financial_type_id
-      WHERE
-        cr.contact_id = %1
-        AND cr.start_date < now()
-        AND cr.is_test = 0
-    ";
- 
- 
-    
-   // print "<br><br>SQL: ".$query;
+
     $dao = CRM_Core_DAO::executeQuery($query, $params);
     $contributions = $contribution_ids = array();
     while ($dao->fetch()) {
       $contributions[$dao->id] = $dao->toArray();
     }
-  
-    if ( empty($contributions) ) {
+
+    if (empty($contributions)) {
       return array();
     }
 
@@ -317,29 +327,35 @@ function pmt2recur_build_recurring_contributions_list($contact_id) {
     $query = "
       SELECT m.source, m.contribution_recur_id
       FROM civicrm_membership m
-      WHERE m.contribution_recur_id IN (". implode(',', array_keys($contributions)) .")
+      WHERE m.contribution_recur_id IN (" . implode(',', array_keys($contributions)) . ")
     ";
     $dao = CRM_Core_DAO::executeQuery($query, $params);
     while ($dao->fetch()) {
       $contributions[$dao->contribution_recur_id]['membership_source'] = $dao->source;
     }
 
-    $options = array();
     foreach ($contributions as $id => $values) {
       $name = 'Offline Recurring Contribution';
       if ($values['page_title']) {
-        $name = '"'. $values['page_title'] .'"';
+        $name = '"' . $values['page_title'] . '"';
       }
       elseif ($values['membership_source']) {
-        $name = '"'. $values['membership_source'] .'"';
+        $name = '"' . $values['membership_source'] . '"';
       }
-      $options[$id] = $name
+      $contributions[$id]['option_label'] = ($values['has_completed_contributions'] ? '' : '* ')
+        . $name
         . ($values['contribution_type_name'] ? " ({$values['contribution_type_name']})" : '')
-        . ($values['amount'] ? ', '. $values['amount'] . ($values['frequency_unit'] ? "/". $values['frequency_unit'] : '') : '')
-        . ($values['start_date'] ? ', started on '. CRM_Utils_Date::customFormat($values['start_date'], '%b %d, %Y') : '')
+        . ($values['amount'] ? ', ' . $values['amount'] . ($values['frequency_unit'] ? "/" . $values['frequency_unit'] : '') : '')
+        . ($values['start_date'] ? ', started on ' . CRM_Utils_Date::customFormat($values['start_date'], '%b %d, %Y') : '')
         . ($values['processor_id'] ? " [{$values['processor_id']}]" : '');
     }
-    $cache[$contact_id] = $options;
+    $cache[$contact_id] = $contributions;
   }
-  return $cache[$contact_id];
+
+  if ($column !== NULL) {
+    return array_column($cache[$contact_id], $column, 'id');
+  }
+  else {
+    return $cache[$contact_id];
+  }
 }
