@@ -5,8 +5,8 @@
   <description>This allows a back-office user to associate a contribution with an automated recurring contribution schedule. This can be useful when an automated contribution schedule experiences a missed transaction (such as the credit card was over its spending limit, or a Direct Debit failed) and the donor/member has mailed a check to cover the missing transaction. </description>
   <license>AGPL-3.0</license>
   <maintainer>
-    <author>Sarah Gladstone at Pogstone Inc.</author>
-    <email>info@pogstone.com</email>
+    <author>Sarah Gladstone at FountainTribe.com</author>
+    <email>info@fountaintribe.com</email>
   </maintainer>
   <releaseDate>2017-07-22</releaseDate>
   <version>2.0</version> 
