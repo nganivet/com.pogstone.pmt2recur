@@ -8,12 +8,12 @@
     <author>Sarah Gladstone at Pogstone Inc.</author>
     <email>info@pogstone.com</email>
   </maintainer>
-  <releaseDate>2015-02-10</releaseDate>
-  <version>1.1</version> 
+  <releaseDate>2017-07-22</releaseDate>
+  <version>2.0</version> 
   <develStage>stable</develStage>
   <compatibility>
-    <ver>4.4</ver>
-    <ver>4.5</ver>
+    <ver>4.6</ver>
+    <ver>4.7</ver>
   </compatibility>
   <comments>This has been tested with Authorize.net, PayPalPro, and eWay. Since there is no payment processor-sepcific code in this extension, it should work with any payment processor that offers automated recurring contributions, but further testing is needed to verify this assumption.</comments>
   <civix>
